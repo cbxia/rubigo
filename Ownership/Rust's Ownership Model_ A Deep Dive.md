@@ -1,6 +1,6 @@
 ---
 created: 2026-05-01T23:02:16+02:00
-modified: 2026-05-01T23:02:34+02:00
+modified: 2026-05-01T23:05:17+02:00
 ---
 
 # Rust's Ownership Model: A Deep Dive
@@ -17,7 +17,7 @@ Before ownership makes sense, you need to know *where* data lives.
 - **Fixed-size**, **LIFO** (last-in, first-out) structure
 - Allocation/deallocation is essentially free — just a pointer increment/decrement
 - Data must have a size **known at compile time**
-- Examples: integers, floats, booleans, tuples of fixed-size types, arrays
+- Examples: integers, floats, booleans, tuples of fixed-size types, *arrays* (yes, arrays! Surprisingly for C# programmers 😎)
 
 ### The Heap
 - **Dynamic**, arbitrarily sized memory
