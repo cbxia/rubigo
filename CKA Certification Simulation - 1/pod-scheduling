@@ -1,0 +1,315 @@
+CKA Mock Questions: Pod Admission and Scheduling
+
+Below are 10 task-style questions modeled on the CKA exam format, covering resource limits, node affinity, taints/tolerations, topology spread, priority classes, and admission controls. Each includes a worked solution.
+
+Question 1: Resource Requests and Limits
+
+Task: Create a Pod named resource-pod in the namespace scheduling using the image nginx:1.25. The container must request 250m CPU and 128Mi memory, with limits of 500m CPU and 256Mi memory.
+
+Solution:
+
+``yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+  namespace: scheduling
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.25
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+`
+
+Apply with kubectl apply -f resource-pod.yaml. Verify with kubectl describe pod resource-pod -n scheduling | grep -A4 Limits.
+
+Question 2: Node Selector
+
+Task: Label node worker-1 with disktype=ssd. Then schedule a Pod named ssd-pod using image redis:7 that runs only on nodes with that label using nodeSelector.
+
+Solution:
+
+`bash
+kubectl label node worker-1 disktype=ssd
+`
+
+`yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ssd-pod
+spec:
+  nodeSelector:
+    disktype: ssd
+  containers:
+  - name: redis
+    image: redis:7
+`
+
+Verify: kubectl get pod ssd-pod -o wide — it should land on worker-1.
+
+Question 3: Required Node Affinity
+
+Task: Create a Pod named affinity-pod using image busybox (with sleep 3600) that must run on a node where the label zone equals either us-east-1a or us-east-1b.
+
+Solution:
+
+`yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: affinity-pod
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: zone
+            operator: In
+            values:
+            - us-east-1a
+            - us-east-1b
+  containers:
+  - name: busybox
+    image: busybox
+    command: ["sh", "-c", "sleep 3600"]
+`
+
+Key points: requiredDuringSchedulingIgnoredDuringExecution is a hard rule; the Pod stays Pending if no node matches.
+
+Question 4: Preferred Node Affinity with Weight
+
+Task: Schedule a Deployment named web (3 replicas, image nginx) that prefers nodes labeled tier=frontend with weight 80, but can run elsewhere if needed.
+
+Solution:
+
+`yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+              - key: tier
+                operator: In
+                values:
+                - frontend
+      containers:
+      - name: nginx
+        image: nginx
+`
+
+Weight ranges from 1–100; higher weights score nodes higher during the scoring phase of scheduling.
+
+Question 5: Taints and Tolerations
+
+Task: Taint node worker-2 with dedicated=gpu:NoSchedule. Then create a Pod named gpu-workload using image tensorflow/tensorflow that tolerates this taint.
+
+Solution:
+
+`bash
+kubectl taint node worker-2 dedicated=gpu:NoSchedule
+`
+
+`yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-workload
+spec:
+  tolerations:
+  - key: "dedicated"
+    operator: "Equal"
+    value: "gpu"
+    effect: "NoSchedule"
+  containers:
+  - name: tf
+    image: tensorflow/tensorflow
+`
+
+Remove the taint later with kubectl taint node worker-2 dedicated=gpu:NoSchedule- (note the trailing -).
+
+Question 6: Pod Anti-Affinity
+
+Task: Create a Deployment cache with 3 replicas of redis:7, ensuring no two replicas run on the same node (use Pod anti-affinity with the kubernetes.io/hostname topology key).
+
+Solution:
+
+`yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: cache
+  template:
+    metadata:
+      labels:
+        app: cache
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - cache
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: redis
+        image: redis:7
+`
+
+If the cluster has fewer than 3 nodes, one replica will remain Pending — expected behavior.
+
+Question 7: Topology Spread Constraints
+
+Task: Create a Deployment frontend with 6 replicas of nginx. Spread the Pods evenly across zones (label topology.kubernetes.io/zone) with a maximum skew of 1.
+
+Solution:
+
+`yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: frontend
+      containers:
+      - name: nginx
+        image: nginx
+`
+
+whenUnsatisfiable: DoNotSchedule makes the constraint hard; use ScheduleAnyway for a soft preference.
+
+Question 8: PriorityClass
+
+Task: Create a PriorityClass named high-priority with value 1000000 and description "Critical workloads". Then create a Pod critical-app using image nginx that uses this PriorityClass.
+
+Solution:
+
+`yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000000
+globalDefault: false
+description: "Critical workloads"
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: critical-app
+spec:
+  priorityClassName: high-priority
+  containers:
+  - name: nginx
+    image: nginx
+`
+
+Higher-priority Pods can preempt lower-priority ones if the scheduler cannot find space. Verify with kubectl get priorityclass.
+
+Question 9: Cordon, Drain, and Uncordon
+
+Task: Mark node worker-3 unschedulable, evict all workloads (ignoring DaemonSets and tolerating emptyDir data loss), then return it to service.
+
+Solution:
+
+`bash
+Mark unschedulable (no new pods)
+kubectl cordon worker-3
+
+Evict existing pods
+kubectl drain worker-3 --ignore-daemonsets --delete-emptydir-data
+
+Return to service
+kubectl uncordon worker-3
+`
+
+cordon only blocks new scheduling; drain evicts running Pods. Add --force if there are bare Pods (not managed by a controller).
+
+Question 10: LimitRange for Namespace Defaults
+
+Task: In namespace dev, create a LimitRange named dev-limits that sets a default container request of 100m/128Mi and a default limit of 500m/512Mi. Verify by creating a Pod without explicit resources and confirming the defaults were applied.
+
+Solution:
+
+`yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limits
+  namespace: dev
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+`
+
+Test it:
+
+`bash
+kubectl run test --image=nginx -n dev
+kubectl describe pod test -n dev | grep -A6 Limits
+`
+
+You should see the LimitRange defaults applied to the container's Requests and Limits, even though they weren't specified in the Pod spec.
+
+Quick Reference: Affinity Operators
+
+| Operator | Meaning |
+|----------|---------|
+| In | Label value is in the supplied set |
+| NotIn | Label value is not in the set |
+| Exists | Label key exists (any value) |
+| DoesNotExist | Label key is absent |
+| Gt / Lt | Numeric greater/less than (node affinity only) |
+
+A solid exam strategy: always verify scheduling outcomes with kubectl get pods -o wide and check kubectl describe pod <name> for events when a Pod stays Pending` — the scheduler explains exactly which predicate failed.
